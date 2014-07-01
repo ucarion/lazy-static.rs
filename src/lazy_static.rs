@@ -83,28 +83,40 @@ macro_rules! lazy_static {
             #[allow(non_camel_case_types)]
             #[allow(dead_code)]
             struct $N {__unit__: ()}
-            static $N: $N = $N {__unit__: ()};
-            impl Deref<$T> for $N {
-                fn deref<'a>(&'a self) -> &'a $T {
-                    use std::sync::{Once, ONCE_INIT};
-                    use std::mem::transmute;
+            static $N: $N = {
+                mod _m {
+                    // Yay, workarounds!
+                    extern crate alloc;
+                    extern crate sync;
+                    extern crate core;
+                    pub use self::sync::one::{Once, ONCE_INIT};
+                    pub use self::core::mem::transmute;
+                    pub use self::core::prelude::Share;
+                    pub use self::alloc::owned::Box;
+                    pub use self::core::prelude::Deref;
+                }
 
-                    #[inline(always)]
-                    fn require_share<T: Share>(_: &T) { }
+                static mut _STATIC: *const $T = 0 as *const $T;
+                static mut _ONCE: _m::Once = _m::ONCE_INIT;
 
-                    unsafe {
-                        static mut s: *const $T = 0 as *const $T;
-                        static mut ONCE: Once = ONCE_INIT;
-                        ONCE.doit(|| {
-                            s = transmute::<Box<$T>, *const $T>(box() ($e));
-                        });
-                        let static_ref = &*s;
-                        require_share(static_ref);
-                        static_ref
+                #[inline(always)]
+                fn _require_share<T: _m::Share>(_: &T) { }
+
+                impl _m::Deref<$T> for $N {
+                    fn deref<'a>(&'a self) -> &'a $T {
+                        unsafe {
+                            _ONCE.doit(|| {
+                                _STATIC = _m::transmute::<_m::Box<$T>, *const $T>(box() ($e));
+                            });
+                            let static_ref = &*_STATIC;
+                            _require_share(static_ref);
+                            static_ref
+                        }
                     }
                 }
-            }
 
+                $N {__unit__: ()}
+            };
         )*
     }
 }
